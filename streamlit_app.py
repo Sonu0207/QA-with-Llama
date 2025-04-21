@@ -1,238 +1,196 @@
-import os
-import re
-import tempfile
-from typing import List, Any
 import streamlit as st
-import torch
+import time  # <-- NEW
 from langchain.chains import RetrievalQA
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain.prompts import PromptTemplate
+from langchain.vectorstores import FAISS
 from langchain.embeddings import HuggingFaceEmbeddings
-from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
-from langchain.vectorstores import FAISS  # Changed from Chroma to FAISS
+from langchain.document_loaders import PyPDFLoader
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.llms import HuggingFacePipeline
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-from nltk.translate.bleu_score import sentence_bleu
-from rouge import Rouge
+from transformers import pipeline
+from langchain.llms.base import LLM
+import tempfile
+import requests
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
+from rouge_score import rouge_scorer
+from nltk.tokenize import word_tokenize
+import nltk
+nltk.download('punkt_tab')
 
 
-# Configure Streamlit
-st.set_page_config(page_title="📚 Document Q&A with GPT2", layout="wide")
+# ====== HARDCODED API KEY ======
+GROQ_API_KEY = "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"
+# ===============================
 
-# Session State Init
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "qa_chain" not in st.session_state:
-    st.session_state.qa_chain = None
+# Try native ChatGroq
+try:
+    from langchain_groq import ChatGroq
+    GROQ_SUPPORTED = True
+except ImportError:
+    GROQ_SUPPORTED = False
 
+# Manual Groq wrapper
+class GroqLLM(LLM):
+    model_name: str = "llama3-8b-8192"
+    temperature: float = 0.7
+    max_tokens: int = 500
+    last_response_time: float = 0.0  # <-- Added
 
-# 🔧 Initialize LLM
-def initialize_llm():
-    model_id = "openai-community/gpt2"
+    def _call(self, prompt: str, stop=None) -> str:
+        headers = {
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json"
+        }
 
-    tokenizer = AutoTokenizer.from_pretrained(model_id)
-    model = AutoModelForCausalLM.from_pretrained(
-        model_id,
-        torch_dtype=torch.float32,
-        device_map="cpu"
-    )
+        data = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens
+        }
 
-    pipe = pipeline(
-        "text-generation",
-        model=model,
-        tokenizer=tokenizer,
-        max_new_tokens=512,
-        temperature=0.7,
-        top_p=0.9,
-        repetition_penalty=1.1
-    )
+        start_time = time.time()
+        response = requests.post("https://api.groq.com/openai/v1/chat/completions", json=data, headers=headers)
+        self.last_response_time = time.time() - start_time
 
-    return HuggingFacePipeline(pipeline=pipe)
+        if response.status_code != 200:
+            raise Exception(f"Groq API error: {response.status_code} - {response.text}")
 
+        return response.json()["choices"][0]["message"]["content"]
 
-# 📂 Document loading
-def load_document(file):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.name)[1]) as temp:
-        temp.write(file.getvalue())
-        temp_path = temp.name
+    @property
+    def _llm_type(self) -> str:
+        return "groq"
 
-    ext = os.path.splitext(file.name)[1].lower()
-    if ext == ".pdf":
-        loader = PyPDFLoader(temp_path)
-    elif ext == ".docx":
-        loader = Docx2txtLoader(temp_path)
-    elif ext == ".txt":
-        loader = TextLoader(temp_path)
+# Groq initializer
+def initialize_groq_llm(model_name="llama3-8b-8192"):
+    if GROQ_SUPPORTED:
+        return ChatGroq(
+            model_name=model_name,
+            temperature=0.7,
+            max_tokens=500,
+            api_key=GROQ_API_KEY
+        )
     else:
-        os.unlink(temp_path)
-        raise ValueError(f"Unsupported file type: {ext}")
+        return GroqLLM(model_name=model_name)
 
+# Local fallback LLM
+class TimedHuggingFacePipeline(HuggingFacePipeline):  # <-- Add timing to local LLM
+    def __call__(self, *args, **kwargs):
+        start = time.time()
+        output = super().__call__(*args, **kwargs)
+        self.response_time = time.time() - start
+        return output
+
+def initialize_local_llm():
+    hf_pipeline = pipeline("text-generation", model="gpt2", max_new_tokens=300)
+    timed_pipeline = TimedHuggingFacePipeline(pipeline=hf_pipeline)
+    return timed_pipeline
+
+# PDF processing
+def process_pdf_to_vectorstore(pdf_file):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(pdf_file.read())
+        tmp_path = tmp.name
+
+    loader = PyPDFLoader(tmp_path)
     docs = loader.load()
-    os.unlink(temp_path)
-    return docs
 
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    splits = text_splitter.split_documents(docs)
 
-# 🔍 Chunking + Embedding
-def process_documents(documents: List[Any]):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=150,
+    embeddings = HuggingFaceEmbeddings()
+    vectorstore = FAISS.from_documents(splits, embeddings)
+
+    return vectorstore
+
+# QA Chain builder
+def build_qa_chain(llm, vectorstore):
+    retriever = vectorstore.as_retriever()
+
+    prompt_template = PromptTemplate(
+        template="""Answer the question based only on the context below. 
+If you don't know the answer, say you don't know.
+
+Context:
+{context}
+
+Question:
+{question}""",
+        input_variables=["context", "question"]
     )
-    chunks = text_splitter.split_documents(documents)
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"}
-    )
-
-    # Changed from Chroma to FAISS
-    vectorstore = FAISS.from_documents(documents=chunks, embedding=embeddings)
-    retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
-
-    return retriever
-
-
-# 🤖 Setup QA Chain
-def setup_qa_chain(llm, retriever):
-    return RetrievalQA.from_chain_type(
+    chain = RetrievalQA.from_chain_type(
         llm=llm,
-        chain_type="stuff",
         retriever=retriever,
-        return_source_documents=True
+        chain_type="stuff",
+        chain_type_kwargs={"prompt": prompt_template}
     )
 
+    return chain
 
-# 🧠 Ask LLM
-def generate_answer(qa_chain, question: str):
-    result = qa_chain({"query": question})
-    return {
-        "answer": result["result"],
-        "sources": result["source_documents"]
-    }
+# ----------------------------
+# Streamlit UI
+# ----------------------------
+st.title("📄 Document Q&A with LLaMA or Local GPT-2")
+st.markdown("Upload a PDF and ask questions using Meta LLaMA or local GPT-2.")
 
+pdf_file = st.file_uploader("Upload your PDF", type=["pdf"])
+question = st.text_input("Ask a question")
+reference_answer = st.text_area("Optional: Reference Answer (for BLEU/ROUGE)")
+model_choice = st.radio("Choose your model:", ["LLaMA 3", "Local GPT-2"])
 
-# 💬 Chat History Source Formatter
-def format_source(doc, i):
-    content = doc.page_content[:300] + "..." if len(doc.page_content) > 300 else doc.page_content
-    meta = doc.metadata
-    out = f"**Source {i+1}**:\n\n{content}\n\n"
-    if meta:
-        out += "**Metadata:**\n" + "\n".join([f"- {k}: {v}" for k, v in meta.items()])
-    return out
+if st.button("Run Q&A") and pdf_file and question:
+    st.info("Processing...")
 
+    vectorstore = process_pdf_to_vectorstore(pdf_file)
 
-# 🧮 F1 Computation
-def compute_f1(reference, prediction):
-    ref_tokens = clean_and_tokenize(reference)
-    pred_tokens = clean_and_tokenize(prediction)
-    common = set(ref_tokens) & set(pred_tokens)
-    if not common:
-        return 0.0
-    precision = len(common) / len(pred_tokens)
-    recall = len(common) / len(ref_tokens)
-    f1 = 2 * precision * recall / (precision + recall)
-    return f1
+    llm = None
+    if model_choice == "LLaMA 3":
+        try:
+            llm = initialize_groq_llm()
+        except Exception as e:
+            st.error(f"Groq LLaMA failed: {e}")
+            st.stop()
+    else:
+        llm = initialize_local_llm()
 
+    # Track performance time
+    start_time = time.time()
+    qa_chain = build_qa_chain(llm, vectorstore)
+    answer = qa_chain.run(question)
+    total_time = time.time() - start_time
 
-def clean_and_tokenize(text):
-    text = text.lower()
-    text = re.sub(r"[^\w\s]", "", text)
-    return text.split()
+    # Output
+    st.success("Answer:")
+    st.write(answer)
 
+    # Metrics
+    st.markdown("### 📊 Performance Metrics")
+    st.write(f"**Model Used:** {model_choice}")
+    st.write(f"**Total Response Time:** {total_time:.2f} seconds")
 
-# 🚀 Streamlit App
-def main():
-    st.title("📚 Document Q&A with Evaluation")
+    if isinstance(llm, GroqLLM):
+        st.write(f"**Groq API Time:** {llm.last_response_time:.2f} seconds")
+    elif isinstance(llm, TimedHuggingFacePipeline):
+        st.write(f"**Local Generation Time:** {llm.response_time:.2f} seconds")
 
-    tab1, tab2 = st.tabs(["🔍 Ask Questions", "📊 Evaluate Model"])
+    # BLEU and ROUGE (if reference provided)
+    if reference_answer.strip():
+        st.markdown("### 🧪 Evaluation Metrics (BLEU & ROUGE)")
+        try:
+            reference = word_tokenize(reference_answer.strip().lower())
+            candidate = word_tokenize(answer.strip().lower())
 
-    # Sidebar
-    with st.sidebar:
-        st.header("📂 Upload Documents")
-        files = st.file_uploader("Upload PDFs, DOCX or TXT", type=["pdf", "docx", "txt"], accept_multiple_files=True)
-        process = st.button("Process Documents")
+            # BLEU
+            smoothie = SmoothingFunction().method4
+            bleu_score = sentence_bleu([reference], candidate, smoothing_function=smoothie)
+            st.write(f"**BLEU Score:** {bleu_score:.4f}")
 
-    if files and process:
-        all_docs = []
-        for file in files:
-            try:
-                docs = load_document(file)
-                all_docs.extend(docs)
-                st.success(f"✅ Loaded {file.name}")
-            except Exception as e:
-                st.error(f"❌ Error: {str(e)}")
-
-        with st.spinner("🔍 Processing..."):
-            retriever = process_documents(all_docs)
-            llm = initialize_llm()
-            st.session_state.qa_chain = setup_qa_chain(llm, retriever)
-            st.success("✅ Ready! Use the tabs above to chat or evaluate.")
-
-    # Tab 1 - Q&A
-    with tab1:
-        if st.session_state.qa_chain:
-            st.header("🧠 Ask Questions")
-
-            for msg in st.session_state.messages:
-                with st.chat_message(msg["role"]):
-                    st.markdown(msg["content"])
-                    if "sources" in msg:
-                        with st.expander("📄 Sources"):
-                            for i, doc in enumerate(msg["sources"]):
-                                st.markdown(format_source(doc, i))
-
-            if question := st.chat_input("Ask a question about your documents..."):
-                st.session_state.messages.append({"role": "user", "content": question})
-                with st.chat_message("user"):
-                    st.markdown(question)
-
-                with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        response = generate_answer(st.session_state.qa_chain, question)
-                        st.markdown(response["answer"])
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": response["answer"],
-                            "sources": response["sources"]
-                        })
-
-                        with st.expander("📄 Sources"):
-                            for i, doc in enumerate(response["sources"]):
-                                st.markdown(format_source(doc, i))
-        else:
-            st.info("⬅️ Upload and process documents to get started.")
-
-    # Tab 2 - Evaluation
-    with tab2:
-        st.header("📊 Evaluate Model Answer")
-
-        if st.session_state.qa_chain:
-            eval_question = st.text_input("Question for Evaluation")
-            eval_reference = st.text_area("Ground Truth Answer (Reference)", height=100)
-            evaluate_btn = st.button("Evaluate Answer")
-
-            if evaluate_btn and eval_question and eval_reference:
-                with st.spinner("Generating and Evaluating Answer..."):
-                    response = generate_answer(st.session_state.qa_chain, eval_question)
-                    prediction = response["answer"]
-                    st.subheader("📌 Predicted Answer")
-                    st.markdown(prediction)
-
-                    # Compute Metrics
-                    try:
-                        rouge = Rouge()
-                        rouge_scores = rouge.get_scores(prediction, eval_reference)[0]["rouge-l"]
-                        bleu_score = sentence_bleu([eval_reference.split()], prediction.split())
-                        f1 = compute_f1(eval_reference, prediction)
-
-                        st.subheader("📈 Evaluation Metrics")
-                        st.metric("BLEU Score", f"{bleu_score:.3f}")
-                        st.metric("ROUGE-L F1", f"{rouge_scores['f']:.3f}")
-                        st.metric("F1 Score", f"{f1:.3f}")
-                    except Exception as e:
-                        st.error(f"⚠️ Evaluation failed: {e}")
-        else:
-            st.warning("⚠️ Please process documents before evaluating.")
-
-
-if __name__ == "__main__":
-    main()
+            # ROUGE
+            scorer = rouge_scorer.RougeScorer(['rouge1', 'rougeL'], use_stemmer=True)
+            rouge_scores = scorer.score(reference_answer, answer)
+            st.write(f"**ROUGE-1 F1:** {rouge_scores['rouge1'].fmeasure:.4f}")
+            st.write(f"**ROUGE-L F1:** {rouge_scores['rougeL'].fmeasure:.4f}")
+        except Exception as e:
+            st.warning(f"⚠️ Evaluation failed: {e}")

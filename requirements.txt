@@ -22,3 +22,6 @@ python-magic
 streamlit
 tqdm
 numpy
+pydantic
+langchain_openai
+langchain_anthropic
