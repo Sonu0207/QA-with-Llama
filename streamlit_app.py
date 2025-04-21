@@ -2,23 +2,21 @@ import os
 import re
 import tempfile
 from typing import List, Any
-
 import streamlit as st
 import torch
 from langchain.chains import RetrievalQA
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.embeddings import HuggingFaceEmbeddings
 from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
-from langchain.vectorstores import Chroma
+from langchain.vectorstores import FAISS  # Changed from Chroma to FAISS
 from langchain.llms import HuggingFacePipeline
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
-
 from nltk.translate.bleu_score import sentence_bleu
 from rouge import Rouge
 
 
 # Configure Streamlit
-st.set_page_config(page_title="📚 Document Q&A with Evaluation", layout="wide")
+st.set_page_config(page_title="📚 Document Q&A with GPT2", layout="wide")
 
 # Session State Init
 if "messages" not in st.session_state:
@@ -27,9 +25,9 @@ if "qa_chain" not in st.session_state:
     st.session_state.qa_chain = None
 
 
-# 🔧 Initialize LLM (CPU-friendly)
+# 🔧 Initialize LLM
 def initialize_llm():
-    model_id = "tiiuae/falcon-rw-1b"  # lightweight model for CPU
+    model_id = "openai-community/gpt2"
 
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(
@@ -86,7 +84,8 @@ def process_documents(documents: List[Any]):
         model_kwargs={"device": "cpu"}
     )
 
-    vectorstore = Chroma.from_documents(documents=chunks, embedding=embeddings)
+    # Changed from Chroma to FAISS
+    vectorstore = FAISS.from_documents(documents=chunks, embedding=embeddings)
     retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
 
     return retriever

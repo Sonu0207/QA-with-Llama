@@ -13,15 +13,12 @@ nltk
 rouge-score
 scikit-learn
 rouge
-
+openai
+faiss-cpu
 pypdf
 python-docx
 docx2txt
 python-magic
-
-
 streamlit
-
-
 tqdm
 numpy
