@@ -8,7 +8,7 @@ accelerate
 bitsandbytes
 pydantic
 sentence-transformers
-chromadb
+chromadb==0.4.15
 nltk
 rouge-score
 scikit-learn
