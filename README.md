@@ -1,6 +1,6 @@
 # 🦙 QA‑with‑LLaMA
 
-A Streamlit-based document Q&A app built using Meta’s LLaMA model (via API) and OpenAI GPT (e.g. GPT‑3.5). Upload a document and ask questions about it!
+A Streamlit-based document Q&A app built using Meta’s LLaMA model (via API) and OpenAI GPT (e.g. GPT‑2). Upload a document and ask questions about it!
 
 ---
 
@@ -9,7 +9,7 @@ A Streamlit-based document Q&A app built using Meta’s LLaMA model (via API) an
 - 📄 Upload any text-based file (PDF, DOCX, TXT, etc.)
 - 💬 Ask natural-language questions about its content
 - ✳ Context‑aware answers powered by GPT‑3.5 via OpenAI API
-- 🌐 Web interface built with [Streamlit][https://app-with-llama-3gur3guqxdtb3iuf5jfdvg.streamlit.app/]
+- 🌐 Web interface built with [Streamlit]([https://app-with-llama-3gur3guqxdtb3iuf5jfdvg.streamlit.app/])
 - ⚙️ Lightweight & easy to run locally
 
 ---
