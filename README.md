@@ -39,3 +39,6 @@ This system enables users to:
    git clone https://github.com/Sonu0207/QA-with-Llama.git
    cd QA-with-Llama
    pip install -r requirements.txt
+
+## Link to app
+[Streamlit](app-with-llama-3gur3guqxdtb3iuf5jfdvg.streamlit.app/)
