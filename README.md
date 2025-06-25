@@ -18,7 +18,7 @@ A Streamlit-based document Q&A app built using Meta’s LLaMA model (via API) an
 
 - **Frontend**: Streamlit (`streamlit_app.py`)
 - **Backend**: Python 3.x handling uploads, chunking, API calls
-- **API**: OpenAI GPT‑3.5 via REST from Python
+- **API**: OpenAI GPT‑2 via REST from Python
 - **Requirements**: Listed in `requirements.txt`
 
 ---
