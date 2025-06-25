@@ -1,19 +1,33 @@
-# 📄 Document question answering template
+# 🦙 QA‑with‑LLaMA
 
-A simple Streamlit app that answers questions about an uploaded document via OpenAI's GPT-3.5.
+A Streamlit-based document Q&A app built using Meta’s LLaMA model (via API) and OpenAI GPT (e.g. GPT‑3.5). Upload a document and ask questions about it!
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://document-question-answering-template.streamlit.app/)
+---
 
-### How to run it on your own machine
+## 🔍 Features
 
-1. Install the requirements
+- 📄 Upload any text-based file (PDF, DOCX, TXT, etc.)
+- 💬 Ask natural-language questions about its content
+- ✳ Context‑aware answers powered by GPT‑3.5 via OpenAI API
+- 🌐 Web interface built with [Streamlit](https://streamlit.io)
+- ⚙️ Lightweight & easy to run locally
 
-   ```
-   $ pip install -r requirements.txt
-   ```
+---
 
-2. Run the app
+## 🛠️ Tech Stack
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+- **Frontend**: Streamlit (`streamlit_app.py`)
+- **Backend**: Python 3.x handling uploads, chunking, API calls
+- **API**: OpenAI GPT‑3.5 via REST from Python
+- **Requirements**: Listed in `requirements.txt`
+
+---
+
+## 🚀 Getting Started
+
+### 1. Clone & Install
+
+```bash
+git clone https://github.com/Sonu0207/QA-with-Llama.git
+cd QA-with-Llama
+pip install -r requirements.txt
