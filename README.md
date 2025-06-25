@@ -41,4 +41,4 @@ This system enables users to:
    pip install -r requirements.txt
 
 ## Link to app
-[Streamlit](app-with-llama-3gur3guqxdtb3iuf5jfdvg.streamlit.app/)
+[Streamlit](https://app-with-llama-3gur3guqxdtb3iuf5jfdvg.streamlit.app/)
